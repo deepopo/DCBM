@@ -2,6 +2,9 @@
 
 This is an implementation of the IEEE TPAMI paper [The Decoupling Concept Bottleneck Model](https://ieeexplore.ieee.org/document/10740789) (DCBM). The intervention/rectification and vision-language-model (VLM) parts are being refined and will be available soon. Please follow the [previous version](https://github.com/deepopo/DCBM/tree/089b0c1b706e4d8ea5386e8ba57f988771330bf0) if you require the intervention/rectification part.  
 
+![DCBM Pipeline. (A) DCBM for prediction and interpretation. (B) DCBM for human-machine interaction, including forward intervention and backward rectification. ](./images/DCBM_pipeline.png)
+
+
 ## Citation
 If you find our paper/code useful in your research, welcome to cite our work
 ```
@@ -63,12 +66,14 @@ python main.py -d CUB_test -seed 0
     |-- celeba.yaml
     |-- celeba_test.yaml
 |-- data
+    |-- __init__.py
     |-- CUB.py
     |-- Derm7pt.py
-    |-- __init__.py
     |-- celeba.py
     |-- data_interface.py
     |-- data_utils.py
+|-- images
+    |-- DCBM_pipeline.png
 |-- models
     |-- __init__.py
     |-- dcbm.py
