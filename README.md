@@ -1,43 +1,84 @@
 # DCBM README
 
+This is an implementation of the IEEE TPAMI paper [The Decoupling Concept Bottleneck Model](https://ieeexplore.ieee.org/document/10740789) (DCBM). The intervention/rectification and vision-language-model (VLM) parts are being refined and will be available soon. Please follow the [previous version](https://github.com/deepopo/DCBM/tree/089b0c1b706e4d8ea5386e8ba57f988771330bf0) if you require the intervention/rectification part.  
+
+## Citation
+If you find our paper/code useful in your research, welcome to cite our work
+```
+@article{zhang2024decoupling,
+  author={Zhang, Rui and Du, Xingbo and Yan, Junchi and Zhang, Shihua},
+  journal={IEEE Transactions on Pattern Analysis and Machine Intelligence}, 
+  title={The Decoupling Concept Bottleneck Model}, 
+  year={2024},
+  pages={1-16},
+  doi={10.1109/TPAMI.2024.3489597}}
+```
+
+## To-do list
+- [x] concept/label learning
+- [ ] the introduction of data preprocessing
+- [ ] forward intervention and backward rectification
+- [ ] VLM-based DCBM
 
 ## Prerequisites
-We use the same environment setting as the one used in "Concept Bottleneck Model" (CBM). Please run `pip install -r requirements.txt` to achieve the environment. Parts of codes are revised based on CBM.
+- Please run `pip install -r requirements.txt` to achieve the environment.
+- This repo is executed under `torch=2.4.0+cu118` and `pytorch-lightning=2.3.3`. Please find the suitable versions of [torch](https://pytorch.org/) and [pytorch-lightning](https://lightning.ai/docs/pytorch/stable/versioning.html#compatibility-matrix).
 
 ## Datasets
-We use CUB and Derm7pt in this repository. Please refer to:
+We use CUB, Derm7pt, and CelebA in this repository. Please refer to:
 #### CUB
 [Original Dataset](http://www.vision.caltech.edu/datasets/cub_200_2011/), [Processed Dataset](https://worksheets.codalab.org/worksheets/0x362911581fcd4e048ddfd84f47203fd2).
 #### Derm7pt
 [Original Dataset](http://derm.cs.sfu.ca).
+#### CelebA
+[Original Dataset](https://mmlab.ie.cuhk.edu.hk/projects/CelebA.html).
 
 ## Usage
-We provide several tools in this repository, including `main.py`, `inference.py`, `mine.py`, and `rec.py`. Take `CUB` as example, we have:
+We provide several tools in this repository. Take `CUB` as an example, we have:
 
 ### Concept and Label Prediction
 #### Train
 ```
-python main.py -dataset CUB -exp DCBM -log_dir ./logs/CUB/ -e 1000 -optimizer sgd -cuda_device 0 -seed 1 -ckpt 1 -use_attr -use_embs -attr_loss_weight 0.1 -embs_weight 1.0 -pretrained -use_aux -early_stop -weighted_loss multiple -data_dir CUB_processed/class_attr_data_10 -concept_percent 100 -n_attributes 112 -num_classes 200 -normalize_loss -b 64 -weight_decay 0.00004 -lr 0.01 -scheduler_step 20 -end2end
+python main.py -d CUB -seed 0
 ```
 
 #### Inference
 ```
-python utils/inference.py -dataset CUB -model_dirs ./logs/CUB/DCBM0.1_1.0_100Model_Seed1/best_model_1.pth -eval_data test -use_attr -concept_percent 100 -n_attributes 112 -data_dir CUB_processed/class_attr_data_10
+python main.py -d CUB_test -seed 0
 ```
 
-### Forward Intervention and Backward Rectification
+### To be continued...
 
-#### Train Decoupling Neural Network based on Mutual Information
-```
-python mine.py CUB -seed 1 -log_dir ./logs/CUB/DCBM0.1_0.01_100Model_Seed1/ -e 10000 -cuda_device 0 -use_attr -data_dir CUB_processed/class_attr_data_10 -model_dir ./logs/CUB/DCBM0.1_0.01_100Model_Seed1/best_model_1.pth -concept_percent 100 -n_attributes 112 -batch_size 64 -lr1 0.001 -lr2 0.0005
-```
+## Directory
 
-#### Forward Intervention
 ```
-python mine.py CUB -log_dir ./logs/CUB/DCBM0.1_0.01_100Model_Seed1/ -log_dir2 ./logs/CUB/DCBM0.1_0.01_100Model_Seed1/ -e 1000 -inference -cuda_device 0 -use_attr -data_dir CUB_processed/class_attr_data_10 -model_dir2 ./logs/CUB/DCBM0.1_0.01_100Model_Seed1/best_model_1.pth -concept_percent 100 -n_attributes 112 -batch_size 64 -lr1 0.001 -lr2 0.0005
-```
-
-#### Backward Rectification
-```
-python rec.py CUB -seed 1 -log_dir ./logs/CUB/DCBM0.1_0.01_100Model_Seed1/ -e 2000 -cuda_device 0 -use_attr -data_dir CUB_processed/class_attr_data_10 -model_dir ./logs/CUB/DCBM0.1_0.01_100Model_Seed1/best_model_1.pth -concept_percent 100 -n_attributes 112 -batch_size 64
+|-- README.md
+|-- main.py
+|-- requirements.txt
+|-- configs
+    |-- CUB.yaml
+    |-- CUB_test.yaml
+    |-- Derm7pt.yaml
+    |-- Derm7pt_test.yaml
+    |-- celeba.yaml
+    |-- celeba_test.yaml
+|-- data
+    |-- CUB.py
+    |-- Derm7pt.py
+    |-- __init__.py
+    |-- celeba.py
+    |-- data_interface.py
+    |-- data_utils.py
+|-- models
+    |-- __init__.py
+    |-- dcbm.py
+    |-- model_interface.py
+    |-- template_model.py
+|-- saves
+    |-- celeba_imbalance.pth
+|-- utils
+    |-- __init__.py
+    |-- analysis.py
+    |-- base_utils.py
+    |-- config.py
 ```

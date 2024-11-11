@@ -13,7 +13,7 @@ __all__ = ['MLP', 'Inception3', 'inception_v3', 'End2EndModel']
 
 model_urls = {
     # Downloaded inception model (optional)
-    'downloaded': 'pretrained/inception_v3_google-1a9a5a14.pth',
+    'downloaded': '~/.cache/torch/hub/inception_v3_google-1a9a5a14.pth',
     # Inception v3 ported from TensorFlow
     'inception_v3_google': 'https://download.pytorch.org/models/inception_v3_google-1a9a5a14.pth',
 }
@@ -31,16 +31,12 @@ class End2EndModel(torch.nn.Module):
 
     def forward_stage2(self, stage1_out):
         if self.use_relu:
-            #attr_outputs = [nn.ReLU()(o) for o in stage1_out]
             stage2_inputs = nn.ReLU()(stage1_out)
         elif self.use_sigmoid:
-            #attr_outputs = [torch.nn.Sigmoid()(o) for o in stage1_out]
             stage2_inputs = torch.nn.Sigmoid()(stage1_out)
         else:
             stage2_inputs = stage1_out
 
-        #stage2_inputs = torch.cat(stage2_inputs, dim=1)
-        #stage1_out = torch.cat(stage1_out, dim=1)
         all_out = [self.sec_model(stage2_inputs)]
         all_out.extend([stage1_out])
         return all_out
@@ -57,7 +53,7 @@ class End2EndModel(torch.nn.Module):
             return self.forward_stage2(outputs)
 
 class DisperseEnd2EndModel(torch.nn.Module):
-    def __init__(self, disperse_model, sub_model1, sub_model2, model1_begin, model1_end, model2_begin, model2_end, use_relu=False, use_sigmoid=False):
+    def __init__(self, disperse_model, sub_model1, sub_model2, model1_begin, model1_end, model2_begin, model2_end, use_relu=False, use_sigmoid=False, use_aux=True):
         super(DisperseEnd2EndModel, self).__init__()
         self.sub_model1 = sub_model1
         self.sub_model2 = sub_model2
@@ -68,6 +64,7 @@ class DisperseEnd2EndModel(torch.nn.Module):
         self.model1_end = model1_end
         self.model2_begin = model2_begin
         self.model2_end = model2_end
+        self.use_aux = use_aux
 
     def forward_stage2(self, stage1_out):
         origin_output1 = stage1_out[:, self.model1_begin: self.model1_end]
@@ -89,7 +86,7 @@ class DisperseEnd2EndModel(torch.nn.Module):
         return all_out1, all_out2
 
     def forward(self, x):
-        if self.disperse_model.training:
+        if self.disperse_model.training and self.use_aux:
             outputs, aux_outputs = self.disperse_model(x)
             return self.forward_stage2(outputs), self.forward_stage2(aux_outputs)
         else:
@@ -97,7 +94,7 @@ class DisperseEnd2EndModel(torch.nn.Module):
             return self.forward_stage2(outputs)
 
 class ConvergeEnd2EndModel(torch.nn.Module):
-    def __init__(self, sub_models, converge_model, input1_pos, input2_pos, use_relu=False, use_sigmoid=False):
+    def __init__(self, sub_models, converge_model, input1_pos, input2_pos, use_relu=False, use_sigmoid=False, use_aux=True):
         super(ConvergeEnd2EndModel, self).__init__()
         self.sub_models = sub_models
         self.converge_model = converge_model
@@ -105,6 +102,7 @@ class ConvergeEnd2EndModel(torch.nn.Module):
         self.use_sigmoid = use_sigmoid
         self.input1_pos = input1_pos
         self.input2_pos = input2_pos
+        self.use_aux = use_aux
 
     def forward_stage2(self, stage1_model1_out, stage1_model2_out):
         origin_output1 = stage1_model1_out
@@ -128,14 +126,12 @@ class ConvergeEnd2EndModel(torch.nn.Module):
         return all_out
 
     def forward(self, x):
-        if self.sub_models.training:
+        if self.sub_models.training and self.use_aux:
             [outputs1, outputs2], [aux_outputs1, aux_outputs2] = self.sub_models(x)
             return self.forward_stage2(outputs1, outputs2), self.forward_stage2(aux_outputs1, aux_outputs2)
         else:
             outputs1, outputs2 = self.sub_models(x)
             return self.forward_stage2(outputs1, outputs2)
-
-
 
 class MLP(nn.Module):
     def __init__(self, input_dim, num_classes, expand_dim):

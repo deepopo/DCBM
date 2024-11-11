@@ -1,15 +1,3 @@
-
-# General
-BASE_DIR = './data'
-N_ATTRIBUTES = 312
-N_CLASSES = 200
-BLACK_DIM = 256
-
-# Training
-UPWEIGHT_RATIO = 9.0
-MIN_LR = 0.0001
-LR_DECAY_SIZE = 0.1
-
 # import random
 # random.seed(0)
 # concept_samples_50p = random.sample(range(112), 112//2)
@@ -39,3 +27,14 @@ concept_samples_20p = \
 
 concept_samples_10p = \
 [  5,  33,  49,  51,  53,  62,  65,  97, 100, 106, 108]
+
+# import random
+# random.seed(0)
+# derm_concept_samples_50p = random.sample(range(8), 8//2)
+# derm_concept_samples_50p.sort()
+
+derm_concept_samples_50p = \
+[0, 3, 6, 7]
+
+derm_concept_samples_25p = \
+[6, 7]
