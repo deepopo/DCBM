@@ -80,10 +80,10 @@ def train(args):
                             max_epochs, 
                             dataset)
 
-    # the vanilla CBM combines and retrain train/val datasets after selecting best hyperparameters.
     if dataset in ['celeba']:
         callbacks = load_callbacks(monitor='val_acc_label', patience=patience, mode='max')
     else:
+        # the vanilla CBM combines and retrains train/val datasets after selecting best hyperparameters.
         callbacks = load_callbacks(monitor='train_acc_label', patience=patience, mode='max')
 
     # define logger
