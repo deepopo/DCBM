@@ -1,11 +1,10 @@
 # DCBM README
 
-This is an implementation of the IEEE TPAMI paper [The Decoupling Concept Bottleneck Model](https://ieeexplore.ieee.org/document/10740789) (DCBM). The intervention/rectification and vision-language-model (VLM) parts are being refined and will be available soon. Please follow the [previous version](https://github.com/deepopo/DCBM/tree/089b0c1b706e4d8ea5386e8ba57f988771330bf0) if you require the intervention/rectification part.  
+This is an implementation of the IEEE TPAMI paper [The Decoupling Concept Bottleneck Model](https://ieeexplore.ieee.org/document/10740789) (DCBM). The vision-language-model (VLM) part is being refined and will be available soon.  
 
 ![DCBM Pipeline.](./images/DCBM_pipeline.png)
 
 *Figure 1*: **DCBM Pipeline**. (A) DCBM for prediction and interpretation. (B) DCBM for human-machine interaction, including forward intervention and backward rectification. 
-
 
 ## Citation
 If you find our paper/code useful in your research, welcome to cite our work
