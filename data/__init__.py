@@ -1,1 +1,1 @@
-from .data_interface import DInterface, CelebAInterface
+from .data_interface import DInterface, CelebAInterface, MINEDataInterface

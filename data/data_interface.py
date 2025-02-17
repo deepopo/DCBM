@@ -8,6 +8,7 @@ from torch.utils.data import Dataset, DataLoader
 from utils import instantiate_from_config
 from data.data_utils import ImbalancedDatasetSampler, EmptyDataset
 from data.celeba import generate_data
+from data.mine import MINEDataset
 
 class DInterface(pl.LightningDataModule):
     def __init__(self, data_config, data_dir, batch_size):
@@ -93,3 +94,26 @@ class CelebAInterface(pl.LightningDataModule):
 
     def test_dataloader(self):
         return self.testset
+
+class MINEDataInterface(pl.LightningDataModule):
+    def __init__(self, train_data=None, test_data=None, batch_size=100000):
+        super().__init__()
+        self.train_data = train_data
+        self.test_data = test_data
+        self.batch_size = batch_size
+
+    def setup(self, stage=None):
+        if self.train_data is not None:
+            self.train_dataset = MINEDataset(*self.train_data)
+        if self.test_data is not None:
+            self.test_dataset = MINEDataset(*self.test_data)
+
+    def train_dataloader(self):
+        if self.train_data is not None:
+            return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True)
+        return None
+
+    def test_dataloader(self):
+        if self.test_data is not None:
+            return DataLoader(self.test_dataset, batch_size=self.batch_size)
+        return None

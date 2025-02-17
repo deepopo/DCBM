@@ -22,7 +22,7 @@ If you find our paper/code useful in your research, welcome to cite our work
 ## To-do list
 - [x] concept/label learning
 - [ ] the introduction of data preprocessing
-- [ ] forward intervention and backward rectification
+- [x] forward intervention and backward rectification
 - [ ] VLM-based DCBM
 
 ## Prerequisites
@@ -52,6 +52,17 @@ python main.py -d CUB -seed 0
 python main.py -d CUB_test -seed 0
 ```
 
+### Forward Intervention and Backward Rectification
+#### Train the Decoupling Network and MI Network, and Simultaneously Inference for Forward Intervention
+```
+python main_int.py -d CUB_df -seed 0
+```
+
+#### Inference for Backward Rectification
+```
+python main_rec.py -d CUB_int -seed 0
+```
+
 ### To be continued...
 
 ## Directory
@@ -59,14 +70,22 @@ python main.py -d CUB_test -seed 0
 ```
 |-- README.md
 |-- main.py
+|-- main_int.py
+|-- main_rec.py
 |-- requirements.txt
 |-- configs
     |-- CUB.yaml
     |-- CUB_test.yaml
+    |-- CUB_df.yaml
+    |-- CUB_int.yaml
     |-- Derm7pt.yaml
     |-- Derm7pt_test.yaml
+    |-- Derm7pt_df.yaml
+    |-- Derm7pt_int.yaml
     |-- celeba.yaml
     |-- celeba_test.yaml
+    |-- celeba_df.yaml
+    |-- celeba_int.yaml
 |-- data
     |-- __init__.py
     |-- CUB.py
@@ -74,6 +93,7 @@ python main.py -d CUB_test -seed 0
     |-- celeba.py
     |-- data_interface.py
     |-- data_utils.py
+    |-- mine.py
 |-- images
     |-- DCBM_pipeline.png
 |-- models
@@ -81,6 +101,7 @@ python main.py -d CUB_test -seed 0
     |-- dcbm.py
     |-- model_interface.py
     |-- template_model.py
+    |-- mine.py
 |-- saves
     |-- celeba_imbalance.pth
 |-- utils
@@ -88,4 +109,5 @@ python main.py -d CUB_test -seed 0
     |-- analysis.py
     |-- base_utils.py
     |-- config.py
+    |-- intervention.py
 ```

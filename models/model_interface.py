@@ -3,8 +3,11 @@ import math
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import pickle as pkl
 import pytorch_lightning as pl
+from sklearn.metrics import roc_auc_score
+from tqdm import tqdm
 
 from utils import instantiate_from_config
 from data.data_utils import find_class_imbalance
@@ -75,7 +78,7 @@ class DCBMInterface(pl.LightningModule):
             for ratio in imbalance:
                 self.attr_criterion.append(torch.nn.BCEWithLogitsLoss(weight=torch.FloatTensor([ratio])).to(self.device))
         else:
-            for i in range(n_attributes):
+            for i in range(self.n_attributes):
                 self.attr_criterion.append(torch.nn.CrossEntropyLoss())
 
     def on_fit_start(self):
@@ -91,7 +94,7 @@ class DCBMInterface(pl.LightningModule):
             inputs, (labels, attr_labels) = batch
         if self.n_attributes > 1:
             attr_labels = [i.long() for i in attr_labels]
-            attr_labels = torch.stack(attr_labels).t()  # .float() #N x 312
+            attr_labels = torch.stack(attr_labels).t()
             if self.dataset in ['celeba']:
                 attr_labels = attr_labels.T
         else:
@@ -262,3 +265,399 @@ class DCBMInterface(pl.LightningModule):
             self.scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=self.scheduler_step, gamma=0.1)
         
         return [optimizer], []
+
+class MINEInterface(pl.LightningModule):
+    def __init__(self, 
+                 model_config, 
+                 mine_steps, 
+                 dataset, 
+                 n_attributes, 
+                 eta):
+        super().__init__()
+        self.save_hyperparameters()
+        self.values = dict() # log_dict
+
+        self.d_f = instantiate_from_config(model_config.decouple_config)
+        self.mine = instantiate_from_config(model_config.mine_config)
+        self.mine_steps = mine_steps
+        self.dataset = dataset
+        self.n_attributes = n_attributes
+        self.eta = eta
+
+        self.decouple_lr = model_config.decouple_lr
+        self.mine_lr = model_config.mine_lr
+        self.decouple_optimizer = model_config.decouple_optimizer
+        self.mine_optimizer = model_config.mine_optimizer
+
+        self.criterion = nn.CrossEntropyLoss()
+
+        self.automatic_optimization = False # switch off the automatic optimization
+
+    def training_step(self, batch, batch_idx):
+        decouple_opt, mine_opt = self.optimizers()
+        # Extract batch data
+        c_explicit = batch['c_explicit']
+        c_implicit = batch['c_implicit']
+        c_truth = batch['c_truth']
+        y_truth = batch['y_truth']
+        W_explicit = batch['W_explicit'][0]  # Take first since all same
+        b_explicit = batch['b_explicit'][0]
+        W_implicit = batch['W_implicit'][0]
+        b_implicit = batch['b_implicit'][0]
+
+        with torch.no_grad():
+            mapping_explicit = self.d_f(c_explicit)
+            residual_implicit = c_implicit - mapping_explicit
+
+        for _ in range(self.mine_steps):
+            mine_opt.zero_grad()
+            loss = torch.zeros(1, device=self.device)
+            for _ in range(5):
+                loss = loss - 1/5 * self.mine(c_explicit, residual_implicit)
+            self.manual_backward(loss)
+            mine_opt.step()
+
+        # Decoupling optimization
+        mi = self.mine.eval()(c_explicit, c_implicit - self.d_f(c_explicit))
+        regularization = torch.mean(self.d_f(c_explicit)**2)
+        loss = mi + self.eta * regularization
+
+        # Calculate new loss with intervention
+        new_loss = self.calculate_intervention_loss(c_explicit, c_implicit, y_truth, c_truth,
+                                                  W_explicit, b_explicit, W_implicit, b_implicit)
+        
+        total_loss = loss + new_loss
+        
+        decouple_opt.zero_grad()
+        self.manual_backward(total_loss)
+        decouple_opt.step()
+
+        # Log metrics
+        self.log('train_mi', mi.item(), prog_bar=True)
+        self.log('train_reg', regularization.item(), prog_bar=True)
+        self.log('train_new_loss', new_loss.item(), prog_bar=True)
+        self.log('train_total_loss', total_loss.item(), prog_bar=True)
+
+        return total_loss
+    
+    def test_step(self, batch, batch_idx):
+        c_explicit = batch['c_explicit']
+        c_implicit = batch['c_implicit']
+        c_truth = batch['c_truth']
+        y_explicit = batch['y_explicit']
+        y_implicit = batch['y_implicit']
+        y_truth = batch['y_truth']
+        W_explicit = batch['W_explicit'][0]
+        b_explicit = batch['b_explicit'][0]
+        W_implicit = batch['W_implicit'][0]
+        b_implicit = batch['b_implicit'][0]
+
+        acc_origin, acc_int, acc_mine = self.calculate_accuracies(
+            c_explicit, c_implicit, y_explicit, y_implicit, y_truth, c_truth,
+            W_explicit, b_explicit, W_implicit, b_implicit
+        )
+
+        self.log('test_acc_origin', acc_origin, on_epoch=True)
+        self.log('test_acc_int', acc_int, on_epoch=True)
+        self.log('test_acc_mine', acc_mine, on_epoch=True)
+
+        return {'test_acc_origin': acc_origin, 
+                'test_acc_int': acc_int, 
+                'test_acc_mine': acc_mine}
+
+    def calculate_intervention_loss(self, c_explicit, c_implicit, y_truth, c_truth,
+                                  W_explicit, b_explicit, W_implicit, b_implicit):
+        mapping_explicit = self.d_f(c_explicit)
+        residual_implicit = c_implicit - mapping_explicit
+        
+        # Create intervention mask based on dataset
+        if self.dataset == 'CUB':
+            cut = torch.ones((c_explicit.shape[0], self.n_attributes), device=self.device)
+            cut[:, 11:] = 0
+        elif self.dataset == 'Derm7pt':
+            cut = torch.zeros((c_explicit.shape[0], 8), device=self.device)
+            cut[:, 1:4] = 1
+        else:
+            cut = torch.ones_like(c_explicit)
+            
+        # Calculate interventions
+        quantile95 = torch.quantile(c_explicit, 0.95, dim=0)
+        quantile05 = torch.quantile(c_explicit, 0.05, dim=0)
+        
+        c_explicit_new = (torch.sign(c_explicit * cut) == torch.sign(c_truth * cut)) * c_explicit + \
+                        (torch.sign(c_explicit * cut) > torch.sign(c_truth * cut)) * quantile05 + \
+                        (torch.sign(c_explicit * cut) < torch.sign(c_truth * cut)) * quantile95
+
+        c_implicit_new = self.d_f(c_explicit_new) + residual_implicit
+        mine_y_new = torch.mm(c_explicit_new, W_explicit.t()) + b_explicit + \
+                     b_implicit + torch.mm(c_implicit_new, W_implicit.t())
+
+        return self.criterion(mine_y_new, y_truth)
+    
+    def calculate_accuracies(self, c_explicit, c_implicit, y_explicit, y_implicit, 
+                           y_truth, c_truth, W_explicit, b_explicit, W_implicit, b_implicit):
+        mapping_test_explicit = self.d_f(c_explicit)
+        residual_test_implicit = c_implicit - mapping_test_explicit
+        
+        # Create intervention mask based on dataset
+        if self.dataset == 'CUB':
+            cut = torch.ones((c_explicit.shape[0], self.n_attributes), device=self.device)
+            cut[:, 11:] = 0
+        elif self.dataset == 'Derm7pt':
+            cut = torch.zeros((c_explicit.shape[0], 8), device=self.device)
+            cut[:, 1:4] = 1
+        else:
+            cut = torch.ones_like(c_explicit)
+
+        # Calculate interventions
+        quantile95 = torch.quantile(c_explicit, 0.95, dim=0)
+        quantile05 = torch.quantile(c_explicit, 0.05, dim=0)
+        
+        c_explicit_new = (torch.sign(c_explicit * cut) == torch.sign(c_truth * cut)) * c_explicit + \
+                        (torch.sign(c_explicit * cut) > torch.sign(c_truth * cut)) * quantile05 + \
+                        (torch.sign(c_explicit * cut) < torch.sign(c_truth * cut)) * quantile95
+
+        test_y_new = torch.mm(c_explicit_new, W_explicit.t()) + b_explicit + b_implicit + \
+                     torch.mm(c_implicit, W_implicit.t())
+                     
+        acc_origin = ((y_implicit + y_explicit).max(axis=1)[1] == y_truth).sum() / y_truth.shape[0] * 100
+        acc_int = (test_y_new.max(axis=1)[1] == y_truth).sum() / y_truth.shape[0] * 100
+        
+        c_implicit_new = self.d_f(c_explicit_new).detach() + residual_test_implicit
+        mine_y_new = torch.mm(c_explicit_new, W_explicit.t()) + b_explicit + b_implicit + \
+                     torch.mm(c_implicit_new, W_implicit.t())
+        acc_mine = (mine_y_new.max(axis=1)[1] == y_truth).sum() / y_truth.shape[0] * 100
+        
+        return acc_origin, acc_int, acc_mine
+    
+    def configure_optimizers(self):
+        if self.decouple_optimizer == 'Adam':
+            decouple_opt = torch.optim.Adam(filter(lambda p: p.requires_grad, self.d_f.parameters()), lr=self.decouple_lr)
+        elif self.decouple_optimizer == 'RMSprop':
+            decouple_opt = torch.optim.RMSprop(filter(lambda p: p.requires_grad, self.d_f.parameters()), lr=self.decouple_lr)
+        elif self.decouple_optimizer == 'SGD':
+            decouple_opt = torch.optim.SGD(filter(lambda p: p.requires_grad, self.d_f.parameters()), lr=self.decouple_lr)
+        
+        if self.mine_optimizer == 'Adam':
+            mine_opt = torch.optim.Adam(filter(lambda p: p.requires_grad, self.mine.parameters()), lr=self.mine_lr)
+        elif self.mine_optimizer == 'RMSprop':
+            mine_opt = torch.optim.RMSprop(filter(lambda p: p.requires_grad, self.mine.parameters()), lr=self.mine_lr)
+        elif self.mine_optimizer == 'SGD':
+            mine_opt = torch.optim.SGD(filter(lambda p: p.requires_grad, self.mine.parameters()), lr=self.mine_lr)
+
+        return [decouple_opt, mine_opt], []
+
+class RECInterface(pl.LightningModule):
+    def __init__(self, d_f, alpha, rec_lr, rec_steps=2000):
+        super().__init__()
+        self.save_hyperparameters()
+        
+        self.d_f = d_f
+        self.rec_steps = rec_steps
+        self.alpha = alpha
+        self.rec_lr = rec_lr
+        self.criterion = torch.nn.CrossEntropyLoss()
+
+    def forward(self, c_explicit):
+        return self.d_f(c_explicit)
+
+    def training_step(self, batch, batch_idx):
+        self.c_explicit = batch['c_explicit']
+        self.c_implicit = batch['c_implicit']
+        self.c_truth = batch['c_truth']
+        self.y_explicit = batch['y_explicit']
+        self.y_implicit = batch['y_implicit']
+        self.y_truth = batch['y_truth']
+        self.W_explicit = batch['W_explicit'][0]
+        self.b_explicit = batch['b_explicit'][0]
+        self.W_implicit = batch['W_implicit'][0]
+        self.b_implicit = batch['b_implicit'][0]
+
+        # Initialize variables for rectification
+        c0 = self.c_explicit.clone().detach()
+        c_explicit_var = c0.clone().detach().requires_grad_(True)
+        c_implicit_var = self.c_implicit.clone().detach()
+        
+        # Optimize explicit concepts
+        optimizer = torch.optim.Adam([c_explicit_var], lr=self.rec_lr)
+
+        for step in tqdm(range(self.rec_steps)):
+            mapping_explicit = self.d_f(c_explicit_var)
+            residual_implicit = (c_implicit_var - mapping_explicit).detach()
+            
+            # Combined prediction
+            pred = (c_explicit_var.matmul(self.W_explicit.T) + self.b_explicit + 
+                   self.b_implicit + (mapping_explicit + residual_implicit).matmul(self.W_implicit.T))
+            l1 = F.cross_entropy(pred, self.y_truth, reduction='none')
+            l2 = self.alpha * (c_explicit_var - c0) ** 2 * c_explicit_var.shape[0]
+            loss = l1 + l2.sum(1)
+            if step > 10 and hasattr(self, 'prev_loss'):
+                mask = torch.abs(self.prev_loss - loss.detach()) > 1e-4
+                self.prev_loss = loss.detach()
+                loss = loss * mask
+            else:
+                self.prev_loss = loss.detach()
+            if loss.max() == 0:
+                break
+
+            # Calculate losses
+            loss = loss.mean()
+            # Optimization step
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+        
+        self.c_explicit_var = c_explicit_var.detach()
+        return torch.tensor(0.0, device=self.device).requires_grad_(True) # fake loss (metrics['loss'] must be required in pytorch_lightning)
+
+    def test_step(self, batch, batch_idx):
+        metrics = {}
+
+        acc_list = []
+        for i in range(len(self.y_explicit)):
+            acc = accuracy(self.y_explicit[i].unsqueeze(0) + self.y_implicit[i].unsqueeze(0), 
+                           self.y_truth[i].unsqueeze(0), topk=[1])[0][0].cpu().numpy()
+            acc_list.append(acc)
+        # acc_list = torch.tensor(np.array(acc_list), device=self.device).unsqueeze(1)
+        wrong_list = (1 - np.array(acc_list) / 100).astype(bool)
+
+        original_concepts = torch.sigmoid(self.c_explicit[wrong_list])
+        rectified_concepts = torch.sigmoid(self.c_explicit_var[wrong_list])
+
+        self.c_truth = self.c_truth/2 + 0.5
+        self.c_truth = self.c_truth[wrong_list]
+
+        # Calculate metrics
+        # metrics['auc'] = roc_auc_score(
+        #     self.c_truth.cpu().numpy(), 
+        #     rectified_concepts.cpu().numpy()
+        # )
+        
+        # Convert to binary predictions
+        orig_binary = (original_concepts > 0.5).float()
+        # pred_binary = (rectified_concepts * (1-acc_list) + original_concepts * acc_list > 0.5).float()
+        pred_binary = (rectified_concepts > 0.5).float()
+       
+        metrics['original_accuracy'] = binary_accuracy(
+            orig_binary, 
+            self.c_truth
+        ).mean()
+
+        metrics['rectification_accuracy'] = binary_accuracy(
+            pred_binary, 
+            self.c_truth
+        ).mean()
+            
+        self.log_dict(metrics)
+        self.metrics = metrics
+        return metrics
+
+    def configure_optimizers(self):
+        return None
+
+    # inference each sample
+
+    # def rectify_sample(self, anchor_idx):
+    #     # Skip if prediction is already rectified
+    #     if accuracy(self.y_explicit[anchor_idx].unsqueeze(0) + self.y_implicit[anchor_idx].unsqueeze(0), self.y_truth[anchor_idx].unsqueeze(0), topk=[1])[0][0].cpu().numpy() != 0:
+    #         return None
+            
+    #     # Initialize variables for rectification
+    #     c0 = self.c_explicit.clone().detach()
+    #     c_explicit_var = c0[anchor_idx].clone().detach().requires_grad_(True)
+    #     # c_explicit_var = torch.autograd.Variable(c0[anchor_idx].clone().detach())
+    #     c_implicit_var = self.c_implicit[anchor_idx].clone().detach()
+        
+    #     # Optimize explicit concepts
+    #     optimizer = torch.optim.Adam([c_explicit_var], lr=self.rec_lr)
+        
+    #     for step in range(self.rec_steps):
+    #         mapping_explicit = self.d_f(c_explicit_var.unsqueeze(0))
+    #         residual_implicit = (c_implicit_var - mapping_explicit[0]).detach()
+            
+    #         # Combined prediction
+    #         pred = (c_explicit_var.matmul(self.W_explicit.T) + self.b_explicit + 
+    #                self.b_implicit + (mapping_explicit[0] + residual_implicit).matmul(self.W_implicit.T))
+            
+    #         # Calculate losses
+    #         l1 = self.criterion(pred.unsqueeze(0), self.y_truth[anchor_idx].unsqueeze(0))
+    #         l2 = self.alpha * torch.norm(c_explicit_var - c0[anchor_idx]) ** 2
+    #         loss = l1 + l2
+    #         # Optimization step
+    #         optimizer.zero_grad()
+    #         loss.backward()
+    #         optimizer.step()
+            
+    #         if step > 10 and hasattr(self, 'prev_loss') and abs(self.prev_loss - loss.item()) <= 1e-5:
+    #             break
+    #         self.prev_loss = loss.item()
+        
+    #     self.loss = loss
+    #     return c_explicit_var.detach()
+
+    # def training_step(self, batch, batch_idx):
+    #     data = batch
+    #     self.c_explicit = data['c_explicit']
+    #     self.c_implicit = data['c_implicit']
+    #     self.c_truth = data['c_truth']
+    #     self.y_explicit = data['y_explicit']
+    #     self.y_implicit = data['y_implicit']
+    #     self.y_truth = data['y_truth']
+    #     self.W_explicit = data['W_explicit'][0]
+    #     self.b_explicit = data['b_explicit'][0]
+    #     self.W_implicit = data['W_implicit'][0]
+    #     self.b_implicit = data['b_implicit'][0]
+    #     metrics = {}
+    #     rectified_concepts = []
+    #     original_concepts = []
+    #     ground_truth = []
+        
+    #     for idx in tqdm(range(len(self.c_explicit))):
+    #         result = self.rectify_sample(idx, data)
+    #         if result is not None:
+    #             original_concepts.append(torch.sigmoid(self.c_explicit[idx]))
+    #             rectified_concepts.append(torch.sigmoid(result))
+    #             ground_truth.append(self.c_truth[idx])
+        
+    #     with torch.no_grad():
+    #         if rectified_concepts:
+    #             original_concepts = torch.stack(original_concepts)
+    #             rectified_concepts = torch.stack(rectified_concepts)
+    #             ground_truth = torch.stack(ground_truth)
+    #             ground_truth = ground_truth/2 + 0.5
+
+    #             metrics['loss'] = torch.tensor(0.0, device=self.device).requires_grad_(True) # fake loss (metrics['loss'] must be required in pytorch_lightning)
+
+    #             # Calculate metrics
+    #             metrics['auc'] = roc_auc_score(
+    #                 ground_truth.cpu().numpy(), 
+    #                 rectified_concepts.cpu().numpy()
+    #             )
+                
+    #             # Convert to binary predictions
+    #             pred_binary = (rectified_concepts > 0.5).float()
+    #             orig_binary = (original_concepts > 0.5).float()
+                
+    #             metrics['original_accuracy'] = binary_accuracy(
+    #                 orig_binary, 
+    #                 ground_truth
+    #             ).mean()
+
+    #             metrics['rectification_accuracy'] = binary_accuracy(
+    #                 pred_binary, 
+    #                 ground_truth
+    #             ).mean()
+                
+    #         self.log_dict(metrics)
+    #         self.metrics = metrics
+    #     return metrics
+
+    # def on_train_epoch_end(self):
+    #     # Print the final metrics
+    #     print("\nResults:")
+    #     for key, value in self.metrics.items():
+    #         print(f"{key}: {value.item():.4f}")
+
+    # def configure_optimizers(self):
+    #     # Not needed for testing/inference
+    #     return None

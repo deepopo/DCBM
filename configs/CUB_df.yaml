@@ -1,0 +1,73 @@
+base:
+  seed: 0
+  model_name: DCBM
+  dataset: CUB
+  backbone: inceptionV3 # [inceptionV3, resnet18, resnet50, resnet100]
+  data_dir: dataset/CUB_processed/class_attr_data_10/
+  mode: both # [train, test, both]
+  # [example] ckpt_path: logs/DCBM_CUB_inceptionV3_cp100_seed0.log/version_0/checkpoints/best-epoch=994.ckpt
+  # [example] ckpt_path: logs/DCBM_CUB_inceptionV3_cp100_seed0.log/version_0/checkpoints/last.ckpt
+  # [example] ckpt_path: None
+  ckpt_path: None
+  # [example] ckpt_path: logs/DCBM_CUB_inceptionV3_cp100_seed0_int.log/version_0/checkpoints/epoch=999-step=21000.ckpt
+  # [example] ckpt_path: None
+  df_ckpt_path: None
+  log_dir: logs/
+  save_dir: saves/
+  batch_size: 64
+  max_epochs: 1000
+  patience: 100
+  n_attributes: 112
+  concept_percent: 100
+  num_classes: 200
+  use_attr: True
+  no_img: False
+  n_class_attr: 2
+
+model:
+  weighted_loss: multiple
+  lr: 0.01
+  min_lr: 0.0001
+  lr_decay_size: 0.1
+  weight_decay: 0.00004
+  scheduler_step: 20
+  use_embs: True
+  attr_loss_weight: 0.1
+  embs_weight: 1.0
+  optimizer: SGD # [Adam, RMSprop, SGD]
+  dcbm_config:
+    target: models.dcbm.DCBM
+    params:
+      pretrained: True
+      freeze: False
+      implicit_dim: 128
+      use_aux: True # set as False if backbone is not inceptionV3
+      expand_dim: 0
+      use_relu: False
+      use_sigmoid: False
+
+int_model:
+  decouple_lr: 0.001
+  mine_lr: 0.0005
+  decouple_optimizer: Adam # [Adam, RMSprop, SGD]
+  mine_optimizer: SGD # [Adam, RMSprop, SGD]
+  mine_steps: 20
+  eta: 1.0
+  decouple_config:
+    target: models.mine.Decoupling
+    params:
+      hidden_dim: 100
+  mine_config:
+    target: models.mine.MINE
+    params:
+      hidden_dim: 50
+
+data:
+  num_workers: 6
+  train_pkl_paths: ['train.pkl', 'val.pkl']
+  val_pkl_paths: []
+  test_pkl_paths: ['test.pkl']
+  target: data.CUB.CUBDataset
+  params:
+    uncertain_label: False
+    resol: 299

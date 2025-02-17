@@ -1,0 +1,72 @@
+base:
+  seed: 0
+  model_name: DCBM
+  dataset: celeba
+  backbone: resnet101 # [inceptionV3, resnet18, resnet50, resnet101]
+  data_dir: dataset/
+  mode: both # [train, test, both]
+  # [example] ckpt_path: logs/DCBM_celeba_inceptionV3_cp100_seed0.log/version_0/checkpoints/best-epoch=143.ckpt
+  # [example] ckpt_path: logs/DCBM_celeba_inceptionV3_cp100_seed0.log/version_0/checkpoints/last.ckpt
+  # [example] ckpt_path: None
+  ckpt_path: None
+  log_dir: logs/
+  save_dir: saves/
+  batch_size: 512
+  max_epochs: 1000
+  patience: 30
+  n_attributes: 6
+  concept_percent: 100
+  num_classes: 256
+  use_attr: True
+  no_img: False
+  n_class_attr: 2
+
+model:
+  weighted_loss: multiple
+  lr: 0.001
+  min_lr: 0.0001
+  lr_decay_size: 0.1
+  weight_decay: 0.00004
+  scheduler_step: 1000
+  use_embs: True
+  attr_loss_weight: 0.1
+  embs_weight: 1.0
+  optimizer: adamp # [Adam, RMSprop, SGD, adamp]
+  dcbm_config:
+    target: models.dcbm.DCBM
+    params:
+      pretrained: True
+      freeze: False
+      implicit_dim: 128
+      use_aux: False # set as False if backbone is not inceptionV3
+      expand_dim: 0
+      use_relu: False
+      use_sigmoid: False
+
+int_model:
+  decouple_lr: 0.001
+  mine_lr: 0.0005
+  rec_lr: 0.025
+  decouple_optimizer: Adam # [Adam, RMSprop, SGD]
+  mine_optimizer: SGD # [Adam, RMSprop, SGD]
+  mine_steps: 20
+  rec_steps: 2000
+  eta: 1.0
+  alpha: 0.0001
+  decouple_config:
+    target: models.mine.Decoupling
+    params:
+      hidden_dim: 100
+  mine_config:
+    target: models.mine.MINE
+    params:
+      hidden_dim: 50
+
+data:
+  num_workers: 6
+  train_pkl_paths: []
+  val_pkl_paths: []
+  test_pkl_paths: []
+  params:
+    uncertain_label: False
+    resol: 64

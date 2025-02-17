@@ -21,12 +21,12 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('-d', default="CUB", help='config file')
-    parser.add_argument('-seed', type=int, default=-1, help='seed.')
+    parser.add_argument('-seed', type=int, help='seed.')
     return parser.parse_args()
 
 def train(args):
     config = OmegaConf.load(f"configs/{args.d}.yaml")
-    seed = args.seed if args.seed != -1 else config.base.seed
+    seed = args.seed if args.seed else config.base.seed
     pl.seed_everything(seed)
 
     # copy parameters
@@ -106,7 +106,7 @@ def train(args):
     if mode in ['train', 'both']:
         trainer.fit(model, data_module, ckpt_path=ckpt_path)
     if mode in ['test', 'both']:
-        trainer = Trainer(accelerator="gpu", callbacks=[], logger=False) # don't save checkpoints
+        trainer = Trainer(accelerator="gpu", callbacks=[], logger=False, enable_checkpointing=False) # don't save checkpoints
         if ckpt_path is None:
             version_dirs = sorted(glob.glob(os.path.join(root_log_dir, "version_*")), key=os.path.getmtime)
             latest_version_dir = version_dirs[-1] if version_dirs else None
