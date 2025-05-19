@@ -1,5 +1,11 @@
 __pycache__
 logs/
-dataset/
+dataset/celeba/
+dataset/CUB/
+dataset/imagenet/
+dataset/CUB_200_2011/
+dataset/CUB_processed/
+dataset/derm7pt_processed/
+dataset/release_v0/
 saves/
 *backup

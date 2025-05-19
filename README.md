@@ -57,6 +57,8 @@ python main_rec.py -d CUB_int -seed 0
 ```
 
 ### VLM-based DCBM
+#### Dataset Preparation
+We follow the `dataset/classes/` and `dataset/concepts_sets/` from [Label-free CBM](https://github.com/Trustworthy-ML-Lab/Label-free-CBM). Please also download `CUB` and `ImageNet` dataset and save them to `dataset/`.  
 #### Train and Inference for VLM-based DCBM
 See `vlm_commands.txt`.  
 
