@@ -578,3 +578,17 @@ class BasicConv2d(nn.Module):
         x = self.conv(x)
         x = self.bn(x)
         return F.relu(x, inplace=True)
+
+class threshold_linear(torch.nn.Module):
+    def __init__(self, in_channels, out_channels, threshold):
+        super(threshold_linear, self).__init__()
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.threshold = threshold
+        self.scale = (1 / (in_channels * out_channels))
+        self.weight = torch.nn.Parameter(
+            self.scale * torch.rand(in_channels, out_channels))
+
+    def forward(self, x):
+        return torch.mm(x, self.weight * (torch.abs(self.weight)>self.threshold))

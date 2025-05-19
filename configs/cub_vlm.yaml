@@ -1,0 +1,34 @@
+base:
+  seed: 0
+  model_name: DCBM
+  max_epochs: 5000
+  dataset: cub
+  log_dir: logs/
+  clip_name: ViT-L/14
+  backbone: clip_ViT-L/14
+  mode: both # [train, test, both]
+#   # [example] ckpt_path: logs/DCBM_cub_clip_ViT-L-14_seed0_vlm.log/version_0/checkpoints/epoch=xxx-step=xxx.ckpt
+#   # [example] ckpt_path: None
+  ckpt_path: None
+  patience: 0
+
+data:
+  clip_cutoff: 0.26
+  feature_layer: layer4
+  activation_batch_size: 512
+  proj_batch_size: 50000
+  save_dir: saves/
+  num_workers: 6
+
+model:
+  alpha: 0.1  
+  beta: 2.0
+  l1_lambda: 0.0005
+  lr: 0.001
+  weight_decay: 4e-4
+  dcbm_config:
+    target: models.vlm_dcbm.VLMDCBM
+    params:
+      target_features_dim: 768
+      implicit_dim: 128
+      threshold: 0.0001

@@ -18,12 +18,6 @@ If you find our paper/code useful in your research, welcome to cite our work
   doi={10.1109/TPAMI.2024.3489597}}
 ```
 
-## To-do list
-- [x] concept/label learning
-- [ ] the introduction of data preprocessing
-- [x] forward intervention and backward rectification
-- [ ] VLM-based DCBM
-
 ## Prerequisites
 - Please run `pip install -r requirements.txt` to achieve the environment.
 - This repo is executed under `torch=2.4.0+cu118` and `pytorch-lightning=2.3.3`. Please find the suitable versions of [torch](https://pytorch.org/) and [pytorch-lightning](https://lightning.ai/docs/pytorch/stable/versioning.html#compatibility-matrix).
@@ -62,7 +56,9 @@ python main_int.py -d CUB_df -seed 0
 python main_rec.py -d CUB_int -seed 0
 ```
 
-### To be continued...
+### VLM-based DCBM
+#### Train and Inference for VLM-based DCBM
+See `vlm_commands.txt`.  
 
 ## Directory
 
@@ -71,7 +67,9 @@ python main_rec.py -d CUB_int -seed 0
 |-- main.py
 |-- main_int.py
 |-- main_rec.py
+|-- main_vlm.py
 |-- requirements.txt
+|-- vlm_commands.txt
 |-- configs
     |-- CUB.yaml
     |-- CUB_test.yaml

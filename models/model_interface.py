@@ -12,6 +12,7 @@ from tqdm import tqdm
 from utils import instantiate_from_config
 from data.data_utils import find_class_imbalance
 from utils.analysis import accuracy, binary_accuracy, js_div
+from utils import cos_similarity_cubed_single, zero_out_small_weights
 
 class DCBMInterface(pl.LightningModule):
     def __init__(self, 
@@ -140,8 +141,8 @@ class DCBMInterface(pl.LightningModule):
         
         loss_concept = sum(loss_concept)
         losses.append(loss_concept)
-        self.log_util(loss_main, 'loss_main')
-        self.log_util(loss_concept, 'loss_concept')
+        # self.log_util(loss_main, 'loss_main')
+        # self.log_util(loss_concept, 'loss_concept')
         
         # implicit embedding
         if self.use_embs:
@@ -149,28 +150,55 @@ class DCBMInterface(pl.LightningModule):
             loss_penalty = self.embs_weight * loss_implicit
             loss_explicit = js_div(outputs[3], mixed_outputs)
 
-            self.log_util(loss_penalty, 'loss_penalty')
+            # self.log_util(loss_penalty, 'loss_penalty')
             losses.append(loss_penalty)
-            self.log_util(loss_implicit, 'loss_implicit')
-            self.log_util(loss_explicit, 'loss_explicit')
+            # self.log_util(loss_implicit, 'loss_implicit')
+            # self.log_util(loss_explicit, 'loss_explicit')
 
         sigmoid_outputs = torch.nn.Sigmoid()(outputs[2])
         acc_attr = binary_accuracy(sigmoid_outputs, attr_labels_var)
-        self.log_util(acc_attr, 'train_acc_attr')
+        # self.log_util(acc_attr, 'train_acc_attr')
         acc = accuracy(mixed_outputs, labels_var, topk=(1,))  # only care about class prediction accuracy
-        self.log_util(acc[0], 'train_acc_label')
+        # self.log_util(acc[0], 'train_acc_label')
+
         class_implicit_acc = accuracy(outputs[3], labels_var, topk=(1,))
         class_explicit_acc = accuracy(outputs[1], labels_var, topk=(1,))
-        self.log_util(class_implicit_acc[0], 'train_implicit_acc_label')
-        self.log_util(class_explicit_acc[0], 'train_explicit_acc_label')
+        # self.log_util(class_implicit_acc[0], 'train_implicit_acc_label')
+        # self.log_util(class_explicit_acc[0], 'train_explicit_acc_label')
 
         if self.use_embs:
             total_loss = sum(losses[:-1]) / (1 + self.attr_loss_weight * self.n_attributes) + losses[-1]
         else:
             total_loss = sum(losses) / (1 + self.attr_loss_weight * self.n_attributes)
-        self.log_util(total_loss, 'train_loss')
+        
+        self.train_acc_accum += acc[0] * inputs_var.size(0)
+        self.train_loss_accum += total_loss
+        self.train_total_samples += inputs_var.size(0)
+        self.train_acc_attr_accum += acc_attr * inputs_var.size(0)
+        self.train_implicit_acc_label_accum += class_implicit_acc[0] * inputs_var.size(0)
+        self.train_explicit_acc_label_accum += class_explicit_acc[0] * inputs_var.size(0)
+        self.train_loss_penalty += loss_penalty * inputs_var.size(0)
         return total_loss
     
+    def on_train_epoch_start(self):
+        self.train_loss_accum = 0.
+        self.train_acc_accum = 0.
+        self.train_acc_attr_accum = 0.
+        self.train_implicit_acc_label_accum = 0.
+        self.train_explicit_acc_label_accum = 0.
+        self.train_loss_penalty = 0.
+        self.train_total_samples = 0
+
+    def on_train_epoch_end(self):
+        if self.current_epoch <= self.stop_epoch:
+            self.scheduler.step(self.current_epoch)
+        self.log_util(self.train_loss_accum/self.train_total_samples, 'train_loss')
+        self.log_util(self.train_acc_accum/self.train_total_samples, 'train_acc_label')
+        self.log_util(self.train_loss_penalty/self.train_total_samples, 'train_loss_penalty')
+        self.log_util(self.train_acc_attr_accum/self.train_total_samples, 'train_acc_attr')
+        self.log_util(self.train_implicit_acc_label_accum/self.train_total_samples, 'train_implicit_acc_label')
+        self.log_util(self.train_explicit_acc_label_accum/self.train_total_samples, 'train_explicit_acc_label')
+
     def validation_step(self, batch, batch_idx):
         self.dcbm.eval()
 
@@ -193,17 +221,30 @@ class DCBMInterface(pl.LightningModule):
 
         sigmoid_outputs = torch.nn.Sigmoid()(outputs[2])
         acc_attr = binary_accuracy(sigmoid_outputs, attr_labels_var)
-        self.log_util(acc_attr, 'val_acc_attr')
         acc = accuracy(mixed_outputs, labels_var, topk=(1,))  # only care about class prediction accuracy
-        self.log_util(acc[0], 'val_acc_label')
         class_implicit_acc = accuracy(outputs[3], labels_var, topk=(1,))
         class_explicit_acc = accuracy(outputs[1], labels_var, topk=(1,))
-        self.log_util(class_implicit_acc[0], 'val_implicit_acc_label')
-        self.log_util(class_explicit_acc[0], 'val_explicit_acc_label')
 
-        total_loss = sum(losses) / (1 + self.attr_loss_weight * self.n_attributes)
-        self.log_util(total_loss, 'val_loss')
-        return total_loss
+        self.val_acc_attr_accum += acc_attr
+        self.val_acc_accum += acc[0]
+        self.val_implicit_acc_label_accum += class_implicit_acc[0] * inputs_var.size(0)
+        self.val_explicit_acc_label_accum += class_explicit_acc[0] * inputs_var.size(0)
+        self.val_total_loss_accum += sum(losses) / (1 + self.attr_loss_weight * self.n_attributes) * inputs_var.size(0)
+        self.val_total_samples += inputs_var.size(0)
+
+    def on_validation_epoch_start(self):
+        self.val_acc_attr_accum = 0.
+        self.val_acc_accum = 0.
+        self.val_implicit_acc_label_accum = 0.
+        self.val_explicit_acc_label_accum = 0.
+        self.val_total_samples = 0
+
+    def on_validation_epoch_end(self):
+        self.log_util(self.val_acc_attr_accum/self.val_total_samples, 'val_acc_attr')
+        self.log_util(self.val_acc_accum/self.val_total_samples, 'val_acc_label')
+        self.log_util(self.val_implicit_acc_label_accum/self.val_total_samples, 'val_implicit_acc_label')
+        self.log_util(self.val_explicit_acc_label_accum/self.val_total_samples, 'val_explicit_acc_label')
+        self.log_util(self.val_total_loss_accum/self.val_total_samples, 'val_total_loss')
 
     def test_step(self, batch, batch_idx):
         self.dcbm.eval()
@@ -212,41 +253,40 @@ class DCBMInterface(pl.LightningModule):
 
         outputs = self.dcbm(inputs_var)
         mixed_outputs = outputs[1] + outputs[3]
-        losses = []
-        loss_main = 1.0 * self.criterion(mixed_outputs, labels_var)
-        losses.append(loss_main)
-        # explicit mapping
-        loss_concept = [
-            self.attr_loss_weight * (
-                1.0 * self.attr_criterion[i](outputs[2][:, i].float(), attr_labels_var[:, i])
-            )
-            for i in range(len(self.attr_criterion))
-        ]
-        loss_concept = sum(loss_concept)
-        losses.append(loss_concept)
 
         sigmoid_outputs = torch.nn.Sigmoid()(outputs[2])
         acc_attr = binary_accuracy(sigmoid_outputs, attr_labels_var)
-        self.log_util(acc_attr, 'test_acc_attr')
+        # self.log_util(acc_attr, 'test_acc_attr')
         acc = accuracy(mixed_outputs, labels_var, topk=(1,))  # only care about class prediction accuracy
-        self.log_util(acc[0], 'test_acc_label')
+        # self.log_util(acc[0], 'test_acc_label')
         class_implicit_acc = accuracy(outputs[3], labels_var, topk=(1,))
         class_explicit_acc = accuracy(outputs[1], labels_var, topk=(1,))
-        self.log_util(class_implicit_acc[0], 'test_implicit_acc_label')
-        self.log_util(class_explicit_acc[0], 'test_explicit_acc_label')
+        # self.log_util(class_implicit_acc[0], 'test_implicit_acc_label')
+        # self.log_util(class_explicit_acc[0], 'test_explicit_acc_label')
 
-        total_loss = sum(losses) / (1 + self.attr_loss_weight * self.n_attributes)
-        self.log_util(total_loss, 'test_loss')
-        return total_loss
+        self.test_acc_attr_accum += acc_attr * inputs_var.size(0)
+        self.test_acc_accum += acc[0] * inputs_var.size(0)
+        self.test_implicit_acc_label_accum += class_implicit_acc[0] * inputs_var.size(0)
+        self.test_explicit_acc_label_accum += class_explicit_acc[0] * inputs_var.size(0)
+        self.test_total_samples += inputs_var.size(0)
+
+    def on_test_epoch_start(self):
+        self.test_acc_attr_accum = 0.
+        self.test_acc_accum = 0.
+        self.test_implicit_acc_label_accum = 0.
+        self.test_explicit_acc_label_accum = 0.
+        self.test_total_samples = 0
+
+    def on_test_epoch_end(self):
+        self.log_util(self.test_acc_attr_accum/self.test_total_samples, 'acc_attr')
+        self.log_util(self.test_acc_accum/self.test_total_samples, 'acc_label')
+        self.log_util(self.test_implicit_acc_label_accum/self.test_total_samples, 'implicit_acc_label')
+        self.log_util(self.test_explicit_acc_label_accum/self.test_total_samples, 'explicit_acc_label')
 
     def log_util(self, loss, name='loss'):
         self.values[name] = loss
         self.log_dict(self.values, logger=True, prog_bar=True, on_step=False, on_epoch=True, 
                       batch_size=self.batch_size)
-        
-    def on_train_epoch_end(self):
-        if self.current_epoch <= self.stop_epoch:
-            self.scheduler.step(self.current_epoch)
         
     def configure_optimizers(self):
         if self.optimizer == 'Adam':
@@ -661,3 +701,160 @@ class RECInterface(pl.LightningModule):
     # def configure_optimizers(self):
     #     # Not needed for testing/inference
     #     return None
+
+# class VLMDCBMInterface(pl.LightningModule):
+#     def __init__(self, model_config):
+#         super().__init__()
+#         self.save_hyperparameters()
+        
+#         self.values = dict() # log_dict
+#         self.vlm_dcbm = instantiate_from_config(model_config.dcbm_config)
+
+#         self.explicit_dim = model_config.dcbm_config.params.explicit_dim
+#         self.threshold = model_config.dcbm_config.params.threshold
+#         self.alpha = model_config.alpha
+#         self.beta = model_config.beta
+#         self.l1_lambda = model_config.l1_lambda
+#         self.lr = model_config.lr
+#         self.weight_decay = model_config.weight_decay
+#         self.batch_size = model_config.proj_batch_size
+#         self.criterion = torch.nn.CrossEntropyLoss()
+
+#     def forward(self, batch, trans=False):
+#         target_features, clip_features, labels = batch[0], batch[1], batch[2]
+#         return target_features, clip_features, labels
+
+#     def training_step(self, batch, batch_idx):
+#         self.vlm_dcbm.train()
+
+#         target_features, clip_features, labels = self(batch)
+#         outs_c, outs_y_explicit, outs_y_implicit = self.vlm_dcbm(target_features)
+
+#         loss_c = -cos_similarity_cubed_single(clip_features.detach(), outs_c[:, :self.explicit_dim])
+#         loss_c = self.alpha * torch.sum(loss_c) / (1 + self.alpha * self.explicit_dim)
+#         loss_y = self.criterion(outs_y_explicit + outs_y_implicit, labels)
+#         loss_implicit = js_div(outs_y_explicit, outs_y_explicit + outs_y_implicit)
+#         loss_penalty = self.beta * loss_implicit
+#         l1_norm = sum(((torch.sign(p.abs()-self.threshold))*p.abs()).sum() for name, p in self.vlm_dcbm.linear_exp.named_parameters() if "weight" in name)
+#         total_loss = loss_y + loss_c + loss_penalty + self.l1_lambda*l1_norm
+
+#         self.train_loss_accum += total_loss * outs_c.size(0)
+#         self.train_total_samples += outs_c.size(0)
+        
+#         return total_loss
+    
+#     def on_train_epoch_start(self):
+#         self.train_loss_accum = 0.
+#         self.train_total_samples = 0
+
+#     def on_train_epoch_end(self):
+#         zero_out_small_weights(self.vlm_dcbm.linear_exp, self.threshold)
+#         self.log_util(self.train_loss_accum/self.train_total_samples, 'train_loss')
+
+#     def validation_step(self, batch, batch_idx):
+#         self.vlm_dcbm.eval()
+
+#         target_features, clip_features, labels = self(batch)
+#         outs_c, outs_y_explicit, outs_y_implicit = self.vlm_dcbm(target_features)
+
+#         loss_c = -cos_similarity_cubed_single(clip_features.detach(), outs_c[:, :self.explicit_dim])
+#         loss_c = self.alpha * torch.sum(loss_c) / (1 + self.alpha * self.explicit_dim)
+#         loss_y = self.criterion(outs_y_explicit + outs_y_implicit, labels)
+#         loss_implicit = js_div(outs_y_explicit, outs_y_explicit + outs_y_implicit)
+#         loss_penalty = self.beta * loss_implicit
+#         l1_norm = sum(((torch.sign(p.abs()-self.threshold))*p.abs()).sum() for name, p in self.vlm_dcbm.linear_exp.named_parameters() if "weight" in name)
+
+#         total_loss = loss_y + loss_c + loss_penalty + self.l1_lambda*l1_norm
+
+#         self.val_loss_y_accum += loss_y.item() * outs_c.size(0)
+#         self.val_loss_c_accum += loss_c.item() * outs_c.size(0)
+#         self.val_loss_penalty_accum += loss_penalty.item() * outs_c.size(0)
+#         self.val_total_loss_accum += total_loss.item() * outs_c.size(0)
+#         _, pred = (outs_y_explicit + outs_y_implicit).topk(1, 1, True, True)
+#         pred = pred.t()
+#         labels = labels.view(1, -1).expand_as(pred)
+#         correct = pred.eq(labels)
+#         correct = correct[:1].reshape(-1).float().mean(0, keepdim=True) * 100
+#         _, pred = (outs_y_explicit).topk(1, 1, True, True)
+#         pred = pred.t()
+#         exp_correct = pred.eq(labels)
+#         exp_correct = exp_correct[:1].reshape(-1).float().mean(0, keepdim=True) * 100
+#         self.val_correct_accum += correct.item() * outs_c.size(0)
+#         self.val_exp_correct_accum += exp_correct.item() * outs_c.size(0)
+#         self.val_total_samples += outs_c.size(0)
+#         if self.current_epoch != 0:
+#             self.vlm_dcbm.linear_exp.weight[torch.abs(self.vlm_dcbm.linear_exp.weight)<=self.threshold] = 0.0
+#         # W_g = self.vlm_dcbm.linear_exp.weight * (torch.abs(self.vlm_dcbm.linear_exp.weight)>self.threshold)
+#         W_g = self.vlm_dcbm.linear_exp.weight
+#         nnz = (W_g.abs() > 1e-5).sum().item()
+#         total = W_g.numel()
+#         self.log_util(nnz/total, 'percentage non-zero')
+
+#     def on_validation_epoch_start(self):
+#         self.val_correct_accum = 0.
+#         self.val_exp_correct_accum = 0.
+#         self.val_loss_y_accum = 0.
+#         self.val_loss_c_accum = 0.
+#         self.val_loss_penalty_accum = 0.
+#         self.val_total_loss_accum = 0.
+#         self.val_total_samples = 0
+
+#     def on_validation_epoch_end(self):
+#         self.log_util(self.val_correct_accum/self.val_total_samples, 'val_acc')
+#         self.log_util(self.val_exp_correct_accum/self.val_total_samples, 'val_explicit_acc')
+#         self.log_util(self.val_loss_y_accum/self.val_total_samples, 'val_loss_y')
+#         self.log_util(self.val_loss_c_accum/self.val_total_samples, 'val_loss_c')
+#         self.log_util(self.val_loss_penalty_accum/self.val_total_samples, 'val_loss_penalty')
+#         self.log_util(self.val_total_loss_accum/self.val_total_samples, 'val_total_loss')
+
+#     def test_step(self, batch, batch_idx):
+#         self.vlm_dcbm.eval()
+
+#         target_features, _, labels = self(batch)
+#         _, outs_y_explicit, outs_y_implicit = self.vlm_dcbm(target_features)
+
+#         _, pred = (outs_y_explicit + outs_y_implicit).topk(1, 1, True, True)
+#         pred = pred.t()
+#         labels = labels.view(1, -1).expand_as(pred)
+#         correct = pred.eq(labels)
+#         correct = correct[:1].reshape(-1).float().mean(0, keepdim=True) * 100
+#         # self.log_util(correct.item(), 'acc')
+#         _, pred = (outs_y_explicit).topk(1, 1, True, True)
+#         pred = pred.t()
+#         exp_correct = pred.eq(labels)
+#         exp_correct = exp_correct[:1].reshape(-1).float().mean(0, keepdim=True) * 100
+#         # self.log_util(exp_correct.item(), 'explicit_acc')
+        
+#         W_g = self.vlm_dcbm.linear_exp.weight * (torch.abs(self.vlm_dcbm.linear_exp.weight)>self.threshold)
+#         nnz = (W_g.abs() > 1e-5).sum().item()
+#         self.log_util(nnz, 'non-zero weights')
+#         total = W_g.numel()
+#         self.log_util(total, 'total weights')
+#         self.log_util(nnz/total, 'percentage non-zero')
+
+#         self.test_correct_accum += correct.item() * outs_y_explicit.size(0)
+#         self.test_exp_correct_accum += exp_correct.item() * outs_y_explicit.size(0)
+#         self.test_total_samples += outs_y_explicit.size(0)
+
+#     def on_test_epoch_start(self):
+#         self.test_correct_accum = 0.
+#         self.test_exp_correct_accum = 0.
+#         # self.test_loss_y_accum = 0.
+#         # self.test_loss_c_accum = 0.
+#         # self.test_loss_penalty_accum = 0.
+#         # self.test_total_loss_accum = 0.
+#         self.test_total_samples = 0
+
+#     def on_test_epoch_end(self):
+#         self.log_util(self.test_correct_accum/self.test_total_samples, 'acc')
+#         self.log_util(self.test_exp_correct_accum/self.test_total_samples, 'explicit_acc')
+        
+#     def log_util(self, loss, name='loss'):
+#         self.values[name] = loss
+#         self.log_dict(self.values, logger=True, prog_bar=True, on_step=False, on_epoch=True, 
+#                       batch_size=self.batch_size)
+        
+#     def configure_optimizers(self):
+#         optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, self.vlm_dcbm.parameters()), lr=self.lr, weight_decay=self.weight_decay)
+        
+#         return [optimizer], []

@@ -1,0 +1,15 @@
+# DCBM
+CIFAR10:
+python main_vlm.py --backbone clip_ViT-L/14 --clip_name ViT-L/14 --l1_lambda 0.001 --threshold 0.0001 --seed 0
+
+CIFAR100:
+python main_vlm.py --dataset cifar100 --backbone clip_ViT-L/14 --clip_name ViT-L/14 --l1_lambda 0.0005 --threshold 0.0001 --seed 0
+
+CUB200:
+python main_vlm.py --dataset cub --backbone clip_ViT-L/14 --clip_name ViT-L/14 --l1_lambda 0.0005 --threshold 0.0001 --seed 0
+
+Places365:
+python main_vlm.py --dataset places365 --backbone clip_ViT-L/14 --clip_cutoff 0.28 --clip_name ViT-L/14 --l1_lambda 0.00006 --threshold 0.0001 --seed 0
+
+ImageNet:
+python main_vlm.py --dataset imagenet --backbone clip_ViT-L/14 --clip_cutoff 0.28 --clip_name ViT-L/14 --l1_lambda 0.00002 --threshold 0.0001 --seed 0
